@@ -1,0 +1,155 @@
+select 古老，兼容性好
+	以事件为单位，组织fd
+poll
+	以fd为单位，组织事件
+
+epoll
+	linux的方言，优化poll
+
+
+	
+select
+	   void FD_CLR(int fd, fd_set *set);    // 从set中删除
+       int  FD_ISSET(int fd, fd_set *set); 	// 判断
+       void FD_SET(int fd, fd_set *set);	// 增加
+       void FD_ZERO(fd_set *set);           //清空
+	   
+	   int select(int nfds, fd_set *readfds, fd_set *writefds, fd_set *exceptfds, struct timeval *timeout);
+			// nfds, 最大的文件描述符+1
+			// timeout超时设置，不进行设置，一直阻塞
+			// 三个集合没有const修饰
+		返回文件描述符的个数，小于0出错，发生事件的fd回写到参数中。
+			有假错，EINTR，表示信号打断
+		
+		
+		使用select，将nfds设为-1， 集合都为空，设置timeout，则可实现sleep事件
+		
+		（可以FD_SET相同的fd多次吗？）
+		
+		
+		缺点：
+			1. 监视现场和监视结果存放在同一空间
+			2. nfds的最大数有上限
+			以事件为单位，监听fd，且事件太单一，除了读、写，都是异常
+
+poll
+	以fd为单位，监听事件，
+	自己建立数组，组内元素是struct pollfd
+	int poll(struct pollfd *fds, nfds_t nfds, int timeout);
+		// fds结构体数组的起始地址
+		// nfds,结构体数组的长度
+		// -1阻塞 0非阻塞 正数表示毫秒超时
+		
+		On success, a positive number is returned; this is the number of structures which have nonzero revents
+       fields (in other words, those descriptors with events or errors reported).  A  value  of  0  indicates
+       that  the  call  timed out and no file descriptors were ready.  On error, -1 is returned, and errno is
+       set appropriately.
+		返回 事件的个数， 失败返回-1， 有假错 EINTR
+		
+		events是位图，设置时用或|方法，判断时用&方法
+		
+		1. 监视现场和监视结果分别存放
+		2. 数组没有长度限制
+		3. 事件种类更多
+
+epoll
+	int epoll_create(int size);
+		// size大于0以便兼容老的内核版本
+		// 成功返回fd，失败返回-1
+	int epoll_ctl(int epfd, int op, int fd, struct epoll_event *event);
+	int epoll_wait(int epfd, struct epoll_event *events,
+                      int maxevents, int timeout);
+	
+	把poll封装，data为union类型
+	
+		
+【】
+	什么是事件？
+	触发模式？
+	poll时可用阻塞、非阻塞，也算是IO模型
+	
+其他读写函数
+	readv()
+		ssize_t readv(int fd, const struct iovec *iov, int iovcnt);
+		
+		struct iovec {
+               void  *iov_base;    /* Starting address */
+               size_t iov_len;     /* Number of bytes to transfer */
+           };
+		   
+		操作空间不是连续的空间，放到数组中
+	writev()
+	
+	readn()
+	writen()
+		对write和read的封装
+
+
+存储映射IO
+	将内存映射到进程地址空间
+	void *mmap(void *addr, size_t length, int prot, int flags,
+                  int fd, off_t offset);
+		// addr可以为NULL，自动找地址
+		// length 映射长度
+		// prot操作属性，读写等
+		// 标志，必选（MAP_SHARED、MAP_PRIVATE），可选（特别地MAP_ANONYMOUS选项）
+		匿名映射相当于malloc，此时fd为-1
+		// offset 偏移量，从文件的此处偏移量开始映射
+		
+		返回值是映射的地址，失败返回MAP_FAILED (that is, (void *) -1)
+	int munmap(void *addr, size_t length);
+		// 匿名映射相当于free
+	
+	求一个文件中字母a有多少个
+		文件长度 stat fstat
+	
+	可以实现共享内存（mmap和sys-V都可实现共享内存，但mmap更快更方便）
+		实现父子进程通信
+
+文件锁
+	多线程下载文件时，对文件的某块加锁
+	fcntl();
+	lockf();
+		int lockf(int fd, int cmd, off_t len);
+			对fd文件的len长度执行cmd操作。cmd有lock ulock tlock(trylock) test
+	flock();
+	
+	在对文件加锁时，是加在inode上，而不是fd所对应的结构体上。
+		使用dup或dup2使不同的fd对应同一个fd对应的结构体，此时关闭文件则两个fd都关闭
+		但对一个文件打开多次时，一个fd关闭，会意外释放在文件上加的文件锁。
+		
+----------------------------------------------------------------------------
+关于select、poll、epoll的文件描述符上限
+
+shell登陆时ulimit -n取的是/etc/security/limits.conf中设置的大小，如果没有默认1024
+ulimit -n设置的是此shell中此用户执行的进程最大的文件描述符上限。
+Provides control over the resources available to the shell and to processes started by  it,  on  systems that allow such control.
+shell中执行一个多进程程序，发现程序中的每个进程打开文件上限都是1024
+
+
+A child process created via fork(2) inherits its parent's resource limits.  Resource limits are preserved across execve(2).
+
+One can set the resource limits of the shell using the built-in ulimit command (limit in csh(1)).  The shell's resource limits are inherited by the processes that it creates to execute commands.
+
+Since Linux 2.6.24, the resource limits of any process can be inspected via /proc/[pid]/limits; see proc(5).
+
+Ancient  systems  provided  a vlimit() function with a similar purpose to setrlimit().  For backward compatibility, glibc also provides vlimit().  All new applications should be written using setr‐
+limit().
+
+通过fork创建的子进程继承父进程的资源限制。通过execve函数资源限制被保留。
+使用内建的ulimit命令可以设置shell的资源限制。shell的资源限制被它所执行的进程所继承。
+
+综上，如果要更改某个用户的文件打开上限数，直接修改/etc/security/limits.conf文件。
+此数量是限制某个用户的单一进程的，而非该用户的所有进程。
+
+
+
+在进程内部，使用select时，select函数本身由于FD_SETSIZE限制，一般来说是1024（代表的是文件描述的最大值限制，而不是数量限制），限制了文件描述符值的上限
+总结：由于进程的上限会先起作用，所以最后收到限制的原因就是
+①进程文件描述符上限
+②select中FD_SETSIZE大小
+Executing FD_CLR() or FD_SET() with a value of fd that is negative or is equal to  or larger than FD_SETSIZE will result in undefined behavior.
+
+
+而所说的poll和epoll没有文件描述符限制，是排除了进程和系统本身的限制。
+	   

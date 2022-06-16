@@ -1,0 +1,155 @@
+需要了解，7层结构、5层结构是怎么回事？
+需要精通两门语言、一门脚本
+
+《tcp/ip网络协议》
+《unix网络编程》
+
+
+套接字socket：
+	套接字也属于【进程间通信】，属于跨主机的传输
+	讨论：跨主机的传输需要注意的问题
+		1. 字节序问题： 
+			大端： 低地址处放高字节
+			小端：（x86）低地址处放低字节
+			
+			传输中，低地址的数据先出去
+			主机字节序：host
+			网络字节序：network
+			_ to_ _: htons, htonl, ntohs, ntohl 
+			
+		2. 对齐
+			struct
+			{
+				int i;
+				float f;
+				char ch;
+			};
+			结构体会自动对齐，如果地址能整除sizeof(变量)大小，
+			解决办法： 不对齐（通过指定宏让编译器不对齐）
+		
+		3. 类型长度
+			int 占多大字节
+			char 型有没有符号
+			解决办法：int32_t, unit32_t, int64_t, int8_t, uint8_t
+		
+		socket是什么
+			将协议和实现方式（流式、报式）封装起来，成为一个fd
+			ps: 守护进程关闭所有文件描述符，不一定需要全部关，因为可能会产生socket交互
+			
+		
+		int socket(int domain, int type, int protocol);
+			AF_UNIX, AF_LOCAL   Local communication              unix(7)
+		   AF_INET             IPv4 Internet protocols          ip(7)
+		   AF_INET6            IPv6 Internet protocols          ipv6(7)
+		   AF_IPX              IPX - Novell protocols
+		   AF_NETLINK          Kernel user interface device     netlink(7) // 内核与用户进行交互
+		   AF_X25              ITU-T X.25 / ISO-8208 protocol   x25(7)
+		   AF_AX25             Amateur radio AX.25 protocol                // 短波协议
+		   AF_ATMPVC           Access to raw ATM PVCs
+		   AF_APPLETALK        Appletalk                        ddp(7)
+		   AF_PACKET           Low level packet interface       packet(7)  // 底层协议，在网卡驱动上
+		   
+		
+		SOCK_STREAM     Provides sequenced, reliable, two-way, connection-based byte streams.  An out-of-band data transmission mechanism may be supported.
+			有序的、可靠的（不是指不丢包，而是指如果接收到，则内容和顺序一定是正确的）
+			双工的：都能收发
+			基于连接的：点对点、一对一
+			基于字节流：数据没有严格的边界（报式则是分块的，有边界的）
+		SOCK_DGRAM      Supports datagrams (connectionless, unreliable messages of a fixed maximum length).
+			数据报试的、非连接、不可靠、有最大长度的
+		SOCK_SEQPACKET  Provides a sequenced, reliable, two-way connection-based data transmission path for datagrams of fixed maximum length; a consumer is required to read an  entire
+                       packet with each input system call.
+			
+			有序的、可靠的、双工的、基于连接的、报式传播
+
+	报式：
+		需要程序员封装的地方多，前面的对齐等都会涉及到
+		
+		被动端（先运行）
+		1. 取得socket
+		2. 给socket取得地址
+		3. 收发消息
+		
+		主动端
+		1. 取得socket
+		2. 给socket取得地址（可以省略，因此系统会给进程分配端口）
+		3. 收发消息
+		4. 关闭socket
+		
+		涉及到的函数
+			socket()
+			bind()
+			sendto()
+			recvform()
+			inet_pton()
+			inet_ntop()
+		
+		多点通讯（只能由报式实现）：广播（全网广播，子网广播）， 多播/组播
+			可以通过man ip tcp utp 重查看socket options，查看或设置在这层面的属性
+			
+			These socket options can be set by using setsockopt(2) and read with getsockopt(2) with the socket level set to SOL_SOCKET for all sockets:
+			setsockopt()
+				int setsockopt(int sockfd, int level, int optname, const void *optval, socklen_t optlen); // level: 层级
+				
+			getsockopt()
+		
+			多播属于D类地址，都是以224开头的
+				在ip层创建多播组、加入多播组、删除多播组
+			
+				send方创建多播组
+				receive加入多播组
+				
+				224.0.0.1，所有支持多播的节点都默认在这个组中且无法离开，则往这个组内发消息等同于广播
+		
+		抓包期wireshare的使用
+	
+	
+		UDP的传输分析
+			网络丢包
+				TTL，time to live， 只能经过路由的个数，一般情况下64（unix）或128（windows）个，这个个数一般足够用了，因此丢包不是由ttl造成的
+				
+				丢包是由阻塞造成的，路由有等待队列，当实现某些条件（如等待队列满）时，会丢弃某些包。
+				
+				则可通过流控来实现，但不能使用开环式流控，要使用停等式流控（闭环流控， 每发一个包等待对方返回的ack）
+					但返回的ack也有可能丢包，因此丢包率会提高。
+					停等式流控牺牲了丢包率，而实现了确认包的接收。
+				
+				RTT：有可能data包丢了，还是返回的ack丢了。
+					 data包需要加编号。
+					 ack也需要加编号。
+				
+					作为一个收发过程的等待时间。超过RTT，则重发包。
+				（自己实现这样一个过程）
+		
+
+			
+	流式：
+		TCP传输分析
+			使用UDP发包时，要等待。
+			可以做一个窗口，持续发送多个包，直到某一个包返回，则当前固定窗口量保持，之后每收一个包，则再发一个包，这个是固定窗口。
+			滑动窗口，和固定窗口相比，改为每收一个包，再发送两个两个包，直到某个包ack超时。
+			
+			这两个模型都是为了抢占路由资源。
+			使用这两个模型时，首先返回的ack并不一定是第一个data包的ack，因为包走的路由不同，ack返回的先后顺序也是不确定的。
+			那么就要对两端的编号进行标记。
+			
+			
+			C端（主动端）
+				1. 取得socket
+				2. 给socket取得地址（可省略）
+				3. 发送连接
+				3. 收发消息
+				5. 关闭连接
+			S端（）
+				1. 取得socket
+				2. 给socket取得地址
+				3. 给socket设置为监听模式
+				4. 接收连接
+				5. 收发消息
+				6. 关闭连接
+			
+			tcp传输的都是字节序
+	
+留疑：
+	1. 目前使用void *将struct sockaddr_in *类型转化为struct sockaddr *类型，
+		视频中说有其他方法，目前还未告知

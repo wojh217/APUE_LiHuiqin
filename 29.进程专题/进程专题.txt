@@ -1,0 +1,183 @@
+进程的基本知识
+
+已经进入多进程阶段，但还未涉及到并发
+1 进程标识符pid
+	类型pid_t,传统上是有符号的16位整形数，如果pid用正数表示，则最多表示2^15-1=32767
+		ulimit -a中并没有对进程个数做限制
+	ps命令 axf axm 和ps ax -L
+	进程号是顺次向下使用，和文件描述符fd使用规则不同（当前可用范围内最小的），哪怕进程销毁，
+		下一要用的进程号也是当前加一。
+	getpid()  获取当前进程号
+	getppid() 获取当前进程的父进程号，这两函数总是成功
+		pid_t getpid(void);
+		pid_t getppid(void);
+
+
+2 进程的产生
+	fork()：
+		pid_t fork(void); //和setjmp一样，也是执行一次，返回两次
+		注意理解关键字: dumplicating，意味着拷贝复制一模一样含义
+		fork后父子进程的区别：fork返回值不同、pid不同、ppid不同、未决信号和文件锁不继承、资源利用率清零
+		init进程：1号，是所有进程的祖先进程
+		调度器的调度策略来决定哪个进程先运行(fork后的两个进程不能确定哪个先运行)
+		在fork之前一定要fflush，不然如果缓冲区中有数据，fork之后会产生两个相同数据的缓冲区。
+		
+		采用fork求200000到200200之间的质数
+			1. 注意子进程结束后要执行exit()
+			2. 为什么shell的命令提示先打印，程序中的print语句后打印
+			3. 多进程程序耗时比理论上按比例的单进程时间要小的多，为什么？
+		man ps中对进程状态的描述：
+           D    Uninterruptible sleep (usually IO) 不能中断的睡眠态
+		   R    Running or runnable (on run queue) 执行中
+		   S    Interruptible sleep (waiting for an event to complete) 可终止的睡眠态
+		   T    Stopped, either by a job control signal or because it is being traced.
+		   W    paging (not valid since the 2.6.xx kernel)
+		   X    dead (should never be seen)
+		   Z    Defunct ("zombie") process, terminated but not reaped by its parent. 僵尸态，已停止但未被其父进程回收
+
+		   For BSD formats and when the stat keyword is used, additional characters may be displayed:
+		   <    high-priority (not nice to other users)
+		   N    low-priority (nice to other users)
+		   L    has pages locked into memory (for real-time and custom IO)
+		   s    is a session leader
+		   l    is multi-threaded (using CLONE_THREAD, like NPTL pthreads do)
+		   +    is in the foreground process group
+		
+		子进程由父进程产生，也要符合谁创建谁释放的原则，既然由父进程创建，则必须由父进程进行其资源的回收
+		僵尸态的进程如何产生？进程结束，但未被父进程回收，且父进程仍然存在
+			僵尸态进程不占用太多的内存，但占用进程号
+		孤儿进程， 其父进程消亡，将被init进程接收(样例，父进程先执行结束退出，子进程就称为孤儿进程)
+		
+		
+	vfork()
+		为了防止拷贝时将所有数据都复制所导致的浪费
+		但现在fork已经采用了写时复制技术，谁要写就拷贝一份出来，如果只读则不拷贝
+	
+	
+3 进程的消亡及释放资源
+	见fork1 primer0 primer1 primer2
+		wait(); 等待进程状态发生变化
+			pid_t wait (int *status); // 成功返回子进程号，失败返回-1
+			有几个宏来判断status的状态
+				WIFEXITED 是否正常结束
+				WEXITCODE 正常结束的结束吗
+				WIFSIGNALED 是否是信号导致的结束
+				WTERMCODE  信号码
+		pid_t waitpid(pid_t pid, int *status, int options);
+			与wait最重要的区别是options，可是现在非阻塞等待
+			参数pid的范围
+			>0 具体的子进程
+			0 同组内的所有子进程
+			-1 所有的子进程
+			<-1 组号为pid绝对值的内的所有子进程
+			
+			wait相当于 wait_pid(-1, &status, 0);
+		waitid();
+		wait3();
+		wait4();
+	
+	交叉分配法
+		分块法
+		池类算法
+
+4 exec函数族
+	execl, execlp, execle, execv, execvp - execute a file
+	The  exec()  family of functions 【replaces】 the current process image with a new process image. 用新的process替换当前的process。
+		int execl( const char *path, const char *arg, ...);
+		int execlp( const char *file, const char *arg, ...);
+		int execle( const char *path, const char *arg , ..., char * const envp[]);
+			前三个才是定参的实现？后三个才是变参的实现？
+		int execv( const char *path, char *const argv[]);
+		int execvp( const char *file, char *const argv[]);
+			目前类似argv的还有几处，如glob函数，environ函数，glpahtv？
+		如果有返回值，代表出错，返回值为-1.
+		
+		注意：
+			1. 替换后pid不变
+			2. exec执行前要执行fflush，否则缓冲区
+			3. fork exec wait三个函数的组合使用 见exec2.c
+			
+
+5 用户权限及组权限（涉及到unix的身份切换）
+	普通用户不能查看/etc/shadow文件，却可以改自己的口令(改口令肯定涉及到shadow文件),是如何实现的？
+	执行命令是带着自己的身份
+	
+	uid和gid不止存一份，有real、effictive、save(save可以没有)三种，鉴定权限是看的是effictive
+		在fork、exec、wait过程中，如exec执行passwd命令，由exec鉴定权限，例如在shell中执行passwd，查看命令如下：
+			[leadcom@localhost ~]$ ls -l /usr/bin/passwd
+			-rwsr-xr-x. 1 root root 30768 2月  22 2012 /usr/bin/passwd 
+			其中有s权限
+		那么其实此时短暂地获取了root权限(r保存，e和s都置为0，0表示root身份)，来做密码的更改，改完之后进程消亡，shell继续循环等待，不必执行身份切回操作。
+	u+s：某个可执行文件具有u+s权限，任何人在调用此可执行文件时，就切换为该可执行文件的user身份
+	g+s：某个可执行文件具有u+s权限，任何人在调用此可执行文件时，就切换为该可执行文件的group身份
+	
+	getuid() 返回进程的real user ID
+	geteuid() 返回进程的effictive user ID
+	getgid()
+	getegid()
+	setuid() 设置effictive user ID
+	setgid()
+	setreuid() 交换ruid 和 euid
+	setregid()
+	seteuid()
+	setegid()
+
+6 观摩课：解释器文件
+	脚本文件如shell、py文件，如果发现脚本文件标记(#!)，则只会加载标记后的解释器路径，然后用整个解释器运行整个文件内容（包含第一行）
+	如#!/bin/cat,则会读取该文件的整个内容。
+
+7 system()， 上述2/3/4点的封装，可以看作fork、exec、wait的封装
+	int system(const char *command); // 使用shell执行命令
+
+8 进程会计(统计进程所占用的资源量)
+	int acct(const char *filename); 进程消亡会将信息写入文件中
+
+9 进程时间(使用time命令)
+	times()
+	clock_t times(struct tms *buf);
+	struct tms {
+               clock_t tms_utime;  /* user time */
+               clock_t tms_stime;  /* system time */
+               clock_t tms_cutime; /* user time of children */
+               clock_t tms_cstime; /* system time of children */
+           };
+
+10 守护进程
+	ps axj
+	[leadcom@localhost ~]$ ps axj
+	PPID   PID  PGID   SID TTY      TPGID STAT   UID   TIME COMMAND
+		1  2171  2171  2171 ?           -1 Ss       0   0:00 /usr/sbin/sshd
+	一直在后台运行，脱离控制终端，会话和group的leader id都是自身pid相同，其parent id为1
+	
+	会话session，标识sid
+	终端
+	setsid(); 只能由子进程执行，执行后
+	一个终端的成功登陆，就会产生一个会话
+		前台进程组，最多只有一个，能接受输入
+		后台进程组
+	进程组相关函数：
+		getpgrp(void); 所在进程组ID
+		getpgrp(psid_t pid); 查看某个进程的组ID
+		getpgid();
+		setpgid();
+	
+	实现一个守护进程
+		fork出子进程
+		子进程关闭
+		子进程的输入输出重定向到/dev/null
+		子进程切到/目录
+		子进程umsk(0)
+	单实例的守护进程，同一时刻只运行运行一次: 锁文件 /var/run/name.pid
+		每个守护进程启动时都会将pid写入锁文件中
+	启动脚本文件：/etc/rc.d/rc.local 不同系统位置不同
+	
+11 系统日志
+	syslogd服务, 所有需要写系统日志的操作将其交给syslogd
+	
+	openlog(); 关联系统日志服务
+	syslog();
+	closelog();
+	通过信号可以将异常终止转变为正常终止
+	
+
+

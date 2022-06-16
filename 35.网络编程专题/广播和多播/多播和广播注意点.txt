@@ -1,0 +1,7 @@
+
+1. 都使用setsockopt
+	广播在socket层，使用SO_BROADCAST
+	多播在ip层，使用IP_MULTICAST_IF
+
+2. 广播使用255.255.255.255
+	多播使用224

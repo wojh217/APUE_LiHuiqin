@@ -1,0 +1,239 @@
+并发专题（信号、线程）
+一般很少将信号和线程混合使用
+
+同步:
+异步: 事件何时到来、产生何种结果都不确定
+
+异步事件的处理： 查询法（发生频率高）、通知法（发生频率低）
+
+一、 信号
+1. 信号的概念
+	信号是软件中断， 信号的相应依赖于中断。
+	kill -l查看所有的信号
+	标准信号值1-34 
+	
+2. singal();
+	typedef void (*sighandler_t)(int); // 对一个参数为int，返回类型为void的函数重定义
+	sighandler_t signal(int signum, sighandler_t handler); //该函数返回一个函数地址，就是返回一个函数指针
+			//如何表示一个函数返回一个函数指针
+			void (*func) (int) (int) // 前面的void (*func) (int)即表示一个函数指针
+	
+	void (*signal(int signum, void (*function)(int))) (int);
+	
+	handler可以是SIG_IGN, SIG_DFL或者函数的入口地址
+	信号会打断阻塞的系统调用（如sleep，open,read）,
+		因此使用open时判断返回结果是否为EINTR，是的话代表被信号打断，需要再次open
+
+3. 信号的不可靠
+	是指信号的行为不可靠，第一个信号调用还未结束，第二个信号又到达
+		两个连续的信号到达，后一个可能会把前一个覆盖掉
+4. 可重入函数
+	函数在执行过程中，再次调用不会有影响
+	所有的系统调用都是可重入的，一部分库函数也是可重入的（如memcpy），不可重入的库函数如localtime等
+		带有重入版本的库函数以_r结尾
+	不可重入的库函数不能作为信号处理函数
+	
+	信号处理函数尽可能小，可防止可重入
+	响应函数不能使用公用的内容，防止资源冲突，如文件打开写入，因为他们公用了文件缓冲区
+	
+	
+5. 信号的响应过程图
+	涉及到调度、中断
+	信号从收到到响应有一个不可避免的延迟(因为是从内核返回到用户态时，才会查看pending表中的信号)
+	mask决定是否响应，pengding决定收到了什么信号
+	思考：如何忽略掉一个信号？ 将pending集中此信号位置为0
+			标准信号为什么要丢失？ pending集是一个位图，只能表示有无，不能表示次数
+			标准信号的响应没有严格的顺序 
+			不能从信号处理函数中任意的往外跳（setjmp longjmp) sigsetjmp siglongjmp
+
+6. 常用函数
+	 kill(); 发送
+		int kill(pid_t pid, int sig); 给某个/些进程发送信号
+			pid为正，具体的某个进程
+			0 组内的所有进程
+			-1 除了init进程外，所有能够发送的进程
+			小于-1, 发给进程组号为其绝对值的进程
+			
+			sig为信号值，为0时，不会发信号，但却会检查进程或进程组
+				常用来检查进程或进程组是否存在，不存在时error会报ESRCH。
+		成功返回0，失败返回-1
+	raise(); 给自己发送
+		int raise(int sig); 给进程或线程发送信号
+			给进程自身发 等同于kill(getpid(), sig);
+			给线程自身发 等同于pthread_kill(pthread_self(), sig);
+			成功为0，失败非0
+	alarm(); //只能精确到秒
+		unsigned int alarm(unsigned int seconds); // 倒计时为0时发送alarm信号给自身进程，alarm信号默认结束当前进程
+			seconds为0， 不发送
+	 
+	 setitimer();
+		int setitimer(int which, const struct itimerval *new_value, struct itimerval *old_value);
+		本身就会形成周期？
+	 例：使用单一计时器,利用alarm或setitimer构造一组函数，实现任意数量的计时器
+	 
+	 pause() 专门用来阻塞等待信号来打断
+	 
+	 
+	abort();
+		人为发送一个信号，结束当前进程，保存当前现场（人为制造一个异常）
+	system(); 
+		之前提到， 可以看作是f e w的封装
+		重提此函数，在有信号的程序中使用该函数时，需要block一个信号，ignore两个信号
+	sleep(); 
+	
+		它的问题，之前提到过
+		可以用nanosleep、usleep替换, select的timeout也可以实现休眠
+
+
+	注意点
+	1. alarm()和signal()的先后问题，signal()在前，alarm()在后
+	2. 多个alarm函数写在一起，只有最后一个生效。
+		一个进程只能有一个闹钟时间，如果在调用alarm之前已设置过闹钟时间，则任何以前的闹钟时间都被新值所代替
+		alarm没办法实现多任务的计时器
+	3. 有的平台sleep是由alarm+sleep封装的，那么如果在使用sleep的代码中也使用到了alarm，则会打乱sleep的时钟信号
+
+漏桶实现(流量控制程序slowcat)， 见slowcat.c
+	使用alarm和signal实现，每次读写查看全局标志loop，信号处理函数更改loop的值
+	
+	无数据时一直等待，每次读数据事件相互独立，读成功后再发下一个信号
+
+令牌桶实现，见slowcat_2.c
+	因为信号是单独执行的，在信号处理函数中再发出信号，因此信号是独立于程序的周期性的存在。因此每次收到信号token+1，
+	读数据的循环则判断token是否大于0，每读取一次token-1，直到token为0.
+	
+	cps 每次读写数
+	burst 令牌积累上限
+	token 令牌数
+
+信号令牌桶封装成类实例
+	注意点：
+		1. 多个令牌同实例放在组数中，且只有第一个运行init函数时执行alarm和signal信号处理函数
+		
+		2. .c文件会编译成动态库和静态库，.h文件给用户，在.h文件中不暴露定义的数据类型，使用typedef将void重命名为要使用的数据类型，真正的定义放在.c文件中
+	
+		3. 钩子函数的使用(钩子函数在何时会被调用？)，需要释放数组和对应的结构体，并将闹钟停止，恢复原来的信号处理行为
+		4. 令牌的获取和释放。一次获取的令牌代表要读取的字节数，如果真实读取的字节数小于该值，要将差值再归坏给token，用于下次继续读取
+		
+		疑问：
+			1. 钩子函数何时被调用，因为一旦执行了init，就会触发alarm信号，如果想显式地退出模块，该如何使用？要直接调用unload?
+			
+	
+	在slowcat_2.c中，主程序的token--和信号处理函数的token++，都不是原子操作，容易产生问题，目前解决方案是将token类型定义为sig_atomic_t类型
+			
+7. 信号集
+	信号集类型： sigset_t
+	int sigemptyset(sigset_t *set);
+	int sigfillset(sigset_t *set);
+	int sigaddset(sigset_t *set, int signum);
+	int sigdelset(sigset_t *set, int signum);
+	int sigismember(const sigset_t *set, int signum);
+
+8. 信号屏蔽字/pending集的处理
+	sigprocmask(); // examine and change blocked signals 对某个信号集的信号做操作
+	(信号虽然在代码段到达，但不响应，直到SIG_UNBLOCK后才会响应刚才到达的信号。
+	不能决定信号什么时候来，但决定信号什么时候处理(相当于延迟处理信号))
+		int sigprocmask(int how, const sigset_t *set, sigset_t *oldset);
+		how有表示操作类型，有三种：
+			SIG_BLOCK： 将set集合中信号阻塞，总的阻塞信号集将是set参数和当前环境的组合（可以理解为将set加入当前环境的block集）
+			SIG_UNBLOCK：将set中的信号从当前block集中删除。
+			SIG_SETMASK：block集被设置为参数set
+		因此一般情况下，在临界周围使用sigprocmask，有两种写法
+			1. 成对使用SIG_BLOCK、SIG_UNBLOCK，意味着增加set中信号到block集和从block集删除set中信号
+				但如果考虑模块化原则---使用前后环境变量并不发生改变，则这种写法不太稳妥
+				比如，当前环境中的block集本身就有一个信号，那么SIG_BLOCK再增加此信号相当于无操作，但离开临界后使用SIG_UNBLOCK
+				则将此信号从block集删除，因此最后得到的blcok集和模块加载前不相同。所以采用如下第二种写法较好
+				```
+				sigprocmask(SIG_BLOCK, &set, NULL);
+				临界区
+				sigprocmask(SIG_UNBLOCK, &set, NULL); 
+				
+				```
+			2. 在对block集做修改时，保存原始的信号集，结束后用SIG_SETMASK恢复
+				```
+				sigprocmask(SIG_BLOCK, &set, &oset);
+				临界区
+				sigprocmask(SIG_SETMASK, &oset, NULL); 
+				
+				```
+		
+		
+	
+	
+	sigpending() 从内核中取pending集合
+
+9. 扩展
+	sigsuspend();  //wait for a signal， 利用此函数可以做一个信号驱动程序
+		int sigsuspend(const sigset_t *mask);
+			sigsuspend()  temporarily  replaces  the  signal mask of the calling process with the mask given by mask and then suspends the
+			process until delivery of a signal whose action is to invoke a signal handler or to terminate a process.
+			暂时地用参数mask取代调用程序原来的信号集，阻塞程序直到信号到达来调用信号处理函数或终止程序.
+			If the signal terminates the process, then sigsuspend() does not return.  If the signal is caught, then sigsuspend() returns after the signal handler returns, and
+			the signal mask is restored to the state before the call to sigsuspend().
+			如果信号终止程序，函数不返回。如果信号被捕获，在信号处理函数返回后，此函数返回，然后程序的信号集被设置为调用之前的状态。
+		
+		
+			
+	   
+		
+	在原来的block.c函数中，希望解除信号阻塞并实现有信号抵达时程序才接着往下运行。
+	因此写为
+		```
+		sigprocmask(SIG_UNBLOCK, &set, NULL); // 解除阻塞
+		pause();							  // 等待信号
+		
+		```
+	但实现运行中，由于这两步并不是原子操作，信号响应发生在pause之前，因此不会运行到pause之后（即信号没有落到pause上）。
+	而sigsuspend函数解除阻塞并等待信号，是一个原子操作，就不会产生上述问题。
+	函数内部用参数mask代替当前信号集，就相当于解除阻塞，然后阻塞等待信号到达，因此称为原子操作。
+	
+	
+	注意的是，等待的信号是参数mask中不阻塞的信号，只要此信号不被参数mask所阻塞，则都打破当前阻塞过程。
+	
+	sigaction(); 将会替换signal，sig会有重入问题(在执行信号处理函数时又响应其他信号)
+					signal也不区分信号的来源，只是执行注册的行为函数
+		int sigaction(int signum, const struct sigaction *act, struct sigaction *oldact);
+		
+		struct sigaction {
+               void     (*sa_handler)(int);
+               void     (*sa_sigaction)(int, siginfo_t *, void *); //  结合getcontext函数,推测第三个参数就是打断位置的现场
+               sigset_t   sa_mask;
+               int        sa_flags;
+               void     (*sa_restorer)(void);
+           };
+		   
+		
+		mydeman.c
+		1）解决方法，响应当前信号时，block另外一些信号
+		2）可以通过si_code判断信号的来源，从而只响应从内核来的信号
+		
+		将之前的signal都变为sigaction处理
+		
+		
+		
+	setitimer(); 将会替换alarm
+	
+10. 实时信号
+	之前讲的都是标准信号，会丢失，没有严格的响应顺序
+	（实时信号和标准信号混用时，先响应标准信号，后响应实时信号）
+	而实时信号不丢失，且排队（能排队的数量ulimit -a 中pending sigals）
+	
+	
+# man wait
+wait用来等待调用进程的子进程发生状态改变。
+子进程状态改变是指：子进行运行结束；子进程被信号中断；子进程被信号重启。
+正常终止的子进程，如果使用了wait将会允许系统回收其资源，否则将不被回收，成为僵尸进程。
+
+如果子进程状态改变，函数会立即返回。否则将阻塞直到子进程状态改变或此函数被信号打断(假设系统调用不会通过sigaction的SA_RESTART进行自动重启的话)。
+
+没有被wait的子进程终止时，会成为僵尸进程。内核为僵尸进程维护一个最小的数据结构，包含PID，终止状态，资源利用情况，来允许它的父进程使用wait来获取这些信息。
+只要僵尸进程不通过wait来从系统中删除，它就会消耗内核进程表的一个槽位，而一旦这个表填满，则不能再创建新的进程。
+如果僵尸进程的父进程终止，它将被init进程接管，而init进程将会自动调用wait来进行收尸。
+
+POSIX.1-2001定义如果SIGCHLD信号被设置为SIG_IGN或者在sigaction中设置SIGCHLD为SA_NOCLDWAIT标志，那么子进程终止时将不会产生僵尸进程，
+此时调用wait或wait_pid将会阻塞等待其所有的子进程都结束才返回，且错误码是ECHILD。
+
+综上：避免僵尸进程的方法有：
+	1. signal(SIGCHLD, SIG_IGN) 或sigaction的SA_NOCLDWAIT标志位通知内核对子进程的结束不关心，由内核回收
+	2. 父进程主动调用 wait、waitpid 等函数等待子进程结束， 如果尚无子进程退出wait会导致父进程阻塞。
+		如果父进程很忙可以用 signal 注册信号处理函数，在信号处理函数调用wait、waitpid等待子进程退出。
+	3. 杀死父进程。杀死僵尸进程的父进程，僵尸进程由init接管，会自动处理善后工作。

@@ -1,0 +1,228 @@
+linux有标准IO和系统IO两种，它们最大的区别就是标准IO减少了系统调用次数。
+
+标准IO有如下几个函数：
+fopen()
+fclose()
+fgetc()
+fputc()
+fgets()
+gputs()
+fread()
+fwrite()
+
+printf()
+scanf()
+
+fseek()
+ftell()
+rewind()
+
+fflush()
+
+# fopen()详解
+	FILE *fopen(const char *path, const char *mode);
+	打开一个文件并且创建一个stream流与它关联。
+	(什么是FILE结构体？)
+	mode模式有：
+	- r 只读打开（文件必须存在），文件指针在文件开头
+	- r+ 读写打开（文件必须存在），文件指针在文件开头
+	- w 只读打开，截取文件到0长度（长度直接清0，而不是从开头覆盖写，这样写多少长度就是多少）或者创建文件，文件指针在开头
+	- w+ 读写打开，如果文件不存在则创建，否则被截断。文件指针在开头。
+	- a 追加写，文件不存在则创建，指针在文件尾。
+	- a+ 读或者追加写。文件不存在则创建。读时指针在开头，写时在结尾。
+	（总结，除了r和r+，其他类型不一定非要文件存在；在所有+模式中，a+因为读写操作的不同指针位置不同）
+	
+	
+	任何新创建的文件都有S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP | S_IROTH | S_IWOTH (0666)权限，被进程的umaks所改变。
+	一个文件中读写操作可以交替运行，但每次读或写都会改变文件指针位置。如果有读也有写，最好每次操作时使用fseek或fgetopt重新获取位置。
+	
+	成功返回指针地址，失败返回NULL，并报错errno。
+	它的报错也可以是malloc() open() 的报错，说明内部要在堆上申请一块空间，用来存放FILE结构体
+
+```
+#include <stdio.h>
+#include <string.h>
+#include <stdlib.h>
+#include <errno.h>
+
+int main(){
+
+        FILE *fp;
+        fp = fopen("tm", "r");
+        if (fp == NULL)
+        {
+                perror("fopen()");
+                fprintf(stderr, "fopen() failed! errno=%d\n", errno);
+				fprintf(stderr, "fopen() failed! msg=%s\n", strerror(errno));
+        }
+        fclose(fp);
+		exit(1);
+
+        return 0;
+}
+```
+
+1.fprintf的使用
+2. errno是全局变量，在某个版本后成为私有变量，不会被其他进程所重新赋值？
+3. perror可以打印当前errno对应的message
+4. fopen返回一个地址，那这个地址是在哪个位置上呢？
+栈 静态区 堆
+不可能是栈，栈内存中的变量在函数返回时会被回收；
+不可能是静态区，静态区变量只声明一次，那么如果打开多个文件，就会覆盖掉之前的打开；
+在堆上，其实就是动态创建了内存
+（小技巧，类似于open、close这样成对出现的函数且返回值是地址的，都是在堆上使用内存）
+5. 操作系统中一个进程能打开的文件数量是1024个（ulimit -n）
+除了操作系统限制，内存大小会限制吗？
+6. 新创文件的权限是多少，一般都是664
+是由0666 & ~umask取得， umask为0002
+	为什么要按位与上一个掩码？为了防止新文件的权限过高
+
+7. exit的使用，见《C语言详解》
+
+# fclose 
+	int fclose(FILE *fp);
+	通过fflush刷新用户空间的缓冲区到fp，关闭它对应的文件描述符。
+	成功返回0，失败返回EOF，并报错errno。
+	更远的调用（如另外一个也调用fclose()）将导致不可知行为。
+	它的errno也可以是close() write() 或 ffush()的错误值。
+	
+	fclose()只刷新用户空间的缓冲区。为了保证数据保存在磁盘上需要刷新内核缓冲区。如使用sync或者fsync.
+
+# fgetc()和fputc()
+int fgetc(FILE *stream);
+读取当前位置的下一个字节，成功返回字节对应的int整数，失败返回EOF。
+int fputc(int c, FILE *stream);
+将整数c代表的字符写入，成功返回写入的字节，失败返回EOF。
+
+
+
+
+
+# fgets()函数
+	char *fgets(char *s, int size, FILE *stream) ;
+		fgets()每次最多读取size-1个字节,并存储到s中（一般size设置为s的大小，这样刚好s的最后一位存储0）。
+		成功返回s的地址，失败或者文件结束返回NULL。
+
+		在读取过程中如果遇到\n换行标志则直接返回。（用vim创建的文件的每行末尾自动有\n标志。）
+		如果s的大小大于size，比如char *s[10], size=5, 则s[0]到s[3]这四位存储的是读取到的字节，s[4]存储'\0'，s[5]到s[9]未被利用。
+
+		（比如 a b c d e f， 如果size等于4， 则需要读取3次。因为末尾有个\n换行标志）
+	
+		从stream中读取sieze-1个字节, 如果碰到结束或换行,则在读取结束或换行后,结束读取操作.
+		接着将读取的内容写入s中,并在末尾加上尾0标志.
+		
+# fputs()函数
+	int fputs(const char *s, FILE *stream); //返回读取的字节数。
+		将s中有效内容写入到stream中（与fgets对应，'\0'元素不属于有效内容）
+	fputs将string s写入stream，但不包含它的结束符'\0'。相当于遍历s的每一个字节，如果是'\0'则结束遍历。
+	ps: 
+		这里就有个问题，如果s是由gets读取的空洞文件读取到的，那么读取的一行内容会包含'\0'，那么用fputs()写入时将不会写入'\0'.
+
+总结: 
+	1. fgets()是读取n-1个字节,遇到换行就返回
+	   fread()是读取n个字节, 遇到换行不返回
+	2. fputs()将buf当字符串输出,因此遇到'\0'结束
+	   fwite()是buf当二进制输出, 一定输出n个字节
+
+# fread()函数
+	size_t fread(void *ptr, size_t size, size_t nmemb, FILE *stream);
+	size_t fwrite(const void *ptr, size_t size, size_t nmemb, FILE *stream);
+	返回成功读或写操作的对象个数
+
+	缺陷： 并没有限制边界？什么含义？
+
+	如果文件够长（大于10字节）：
+	fread(buf, 1, 10, fp); //返回10个对象，总长10个字节
+	fread(buf, 10, 1, fp); //返回1个对象，总长10个字节
+	如果文件不够10字节
+	fread(buf, 1, 10, fp); //返回10个对象，总长10个字节
+	fread(buf, 10, 1, fp); //返回0个对象(因为不够一次读取)
+	所以一般都是采用每个对象1字节，读n个对象
+
+
+	文件复制(注意读取到的n字节)
+	while ( (n=fread(buf, 1, BUFFSIZE, fp) > 0 )
+	{
+		fwrite(buf, 1, n, fp);
+	}
+
+# fprintf和族函数
+	int printf(const char *format, ...); // 按format的指定格式输出到stdout中
+	int fprintf(FILE *stream, const char *format, ...); // 输出到指定的stream中，是追加模式a吗
+	int sprintf(char *str, const char *format, ...); //输出到指定的str中，str最后一位是尾0
+	int snprintf(char *str, size_t size, const char *format, ...); // 为了防止越界
+
+	fgets和sprintf还是没有解决，要读取的大小大于buffer大小怎么办？
+
+# scanf和族函数
+	int scanf(const char *format, ...); // 从终端拿数据解析到参数后的地址中
+	int fscanf(FILE *stream, const char *format, ...);
+	int sscanf(const char *str, const char *format, ...);  // 把一个长字符串按照特定格式解析到
+	使用scanf系列函数时，要慎用%s，因为不确定输入的字符到底有多长，解析到地址中有风险
+
+
+	目前位置，没有任何一个函数，能够从一个流中获取任意大小字节数据，fgets和fread都有size的限制，一次不能超过size个，不能想取多少取多少。
+
+
+# fseek和ftell（fseeko和ftello）
+	int fseek(FILE *stream, long offset, int whence); // whence可取SEEK_SET, SEEK_CUR, SEEK_END
+	long ftell(FILE *stream);
+	void rewind(FILE *stream); // 相当于fseek(fp, 0L, SEEK_SET)
+
+	文件的读和写都是在文件指针的当前位置进行的。
+
+	fseek常用于建立空洞文件（有为0的字符），比如下载文件，建立文件后，直接fseek到2G大小.
+		此时占用的磁盘空间大小是2G大小吗？
+
+
+	这两个函数使用了long类型，但不同机器上对long类型的长度定义不同，32位机器上，long为32位即4字节大小，
+	则long能表示的范围-2^31 到 2^31-1,大约是2GB大小，那么如果文件超过此大小，则这两个函数将不能定位到准确位置。
+	
+	ftell返回文件指针位置，按道理来说不应该是负数，但fseek函数中为了往前移动指针，要求offset允许为负数。
+
+	（方言）fseeko和ftello用定义的off_t取代long类型，可在编译时#define _FILE_OFFSET_BITS 64 指定为64位大小。
+	但他们不适用c99标准。可移植性差。
+
+# fflush()函数
+	int fflush(FILE *stream); 如果参数为NULL，则刷新所有打开的流
+	刷新流，比如printf默认是行缓冲模式。
+
+# 缓冲区
+	作用，大多数是好事，合并系统调用
+	那么这个缓冲区是在进程空间的吧， 在进程空间的缓冲区是为了减少系统调用的次数。
+	内核中应该也有一个缓冲区。
+	
+	行缓冲： 换行时刷新，  （标准输出是行缓冲，因为是终端设备）
+	全缓冲： 满了的时候刷新，强制刷新 （只要不是终端设备，默认的缓冲模式都是全缓冲）
+	无缓冲： 立即输出，如stderr
+
+
+	setvbuf设置缓冲区（了解即可）
+		int setvbuf(FILE *stream, char *buf, int mode, size_t size);
+
+# 如何完整的获取一行(自己实现getline_5.c)
+	#define _GNU_SOURCE
+	ssize_t getline(char **lineptr, size_t *n, FILE *stream);
+	利用的动态申请内存。
+	lineptr和n需要初始化。
+	（方言）getline是个可控的内存泄露。
+
+
+# 临时文件
+	需要考虑到的问题
+	1. 如何不冲突的创建临时文件
+	多用户同时在tmp目录下创建临时文件，会发生冲突吗？这里的冲突是指文件名冲突？能否创建的文件名与用户id相关联，这样就不会用户与用户的冲突；
+	那同一进程的两个线程创建两个临时文件，会发生冲突吗？这里创建的文件名是否需要再指定线程编号和时间戳，来保证文件名不冲突？
+
+	2. 忘记销毁临时文件
+	如果创建后没有及时销毁，且当前创建的频率非常高，那么会占用大量的存储空间，且文件名冲突的概率会增大
+
+
+	char *tmpnam(char *s);
+	tmpname用于创建一个临时文件名，一般我们创建完成之后会以非r的模式打开它（因为默认它是不存在的），然后进行写的操作。
+	但unix必须考虑到并发，如果两个进程都在进行创建临时文件并打开操作，
+	tmpfile
+	FILE *tmpfile(void);
+	
+	匿名文件，用ls也查看不到，因为没有名字，所有不会产生文件名冲突；因为是FILE*类型，关闭后会自动销毁。
+

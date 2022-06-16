@@ -1,0 +1,172 @@
+# 线程
+
+
+1 线程的概念
+	一个正在运行的函数
+	posix线程是一套标准，不是一个实现
+	openmp线程也是一套标准
+	线程标识： pthread_t
+	线程的调度取决于调度器策略
+	
+	ps -axm查看线程
+	ps ax -L
+
+2 线程的创建
+	int pthread_equal(pthread_t t1, pthread_t t2); // 比较线程标识
+	pthread_t pthread_self(void); // 返回当前线程标识
+
+	int pthread_create(pthread_t *thread, const pthread_attr_t *attr, void *(*start_routine) (void *), void *arg);
+		thread用来回填
+		attr属性，80%都可以用默认来解决，一般填NULL
+		start_routine 函数指针
+		arg 要传的参数
+	成功返回0，失败返回errno
+	
+	
+	线程的终止，3种方式
+		1. 线程从启动例程返回，返回值就是线程的退出码(即线程函数中return返回)
+		2. 线程可以被同一进程中的其他线程取消(如果此线程是进程中的最后一个线程，则终止时进程也结束)
+		3. 线程调用pthread_exit()函数(如果此线程是进程中的最后一个线程，则终止时进程也结束)，(相比于用return返回，使用pthread_exit()可以实现线程栈的清理)
+		pthread_join()  --> 相当于进程的wait()
+
+	栈的清理
+		pthread_cleanup_push() 这两个都是宏，必须得成对出现
+			void pthread_cleanup_push(void (*routine)(void *),
+		pthread_cleanup_pop()
+			void pthread_cleanup_pop(int execute); //excute标识是否调用
+		这两个函数放在线程函数中，在pthread_exit()退出前按注册顺序逆序调用。
+		
+		
+		
+		
+	线程的取消选项
+		线程取消：int pthread_cancel(pthread_t thread);
+		取消有2种状态：允许和不允许
+		允许取消又分为： 异步cancel， 推迟cancel(默认，推迟到cancel点取消)
+		cancel点：POSIX定义的cancel点，都是可能引发阻塞的系统调用
+		
+		int pthread_setcancelstate(int state, int *oldstate); // 设置是否允许取消
+		int pthread_setcanceltype(int type, int *oldtype); // 设置取消方式
+		void pthread_testcancel(void); // 什么都不做，就是一个取消点
+		
+		如果在线程取消时已经注册了清理函数，那么就会执行清理函数。
+		
+		
+		
+	线程分离
+		int pthread_detach(pthread_t thread);
+		
+	线程的栈空间是独立的，因此一个进程能创建多少个线程取决于外部资源的消耗情况，如32位机器内存空间4GB，可用不足3GB，则数量是3GB/栈空间大小
+	
+	线程竞争：多个线程打开同一个文件进行读写操作,见conflict.c
+	
+	
+	池类找质数
+		将数字放入池中，多个线程从池内拿数字，>0表示有效，线程判断是否为指数；=0表示数据被取走；<0表示已经没有可处理的数据，准备退出。
+		
+	
+3 线程同步
+	(按顺序打印abcd，见abcd.c abcd_cond.c
+	 线程实现mytbf，忙等和通知法
+	 使用线程池求质数，忙等和通知法
+	 信号量，见mysem目录
+	)
+	
+
+	互斥量(查询法)
+		某个资源在使用时有可能会产生竞争或冲突，则给该资源（临界区）加上锁。
+		pthread_mutex_t
+		int pthread_mutex_init(pthread_mutex_t *restrict mutex,const pthread_mutexattr_t *restrict attr);
+			// pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER; //静态初始化
+		int pthread_mutex_destroy(pthread_mutex_t *mutex);
+		int pthread_mutex_lock(pthread_mutex_t *mutex);
+		int pthread_mutex_trylock(pthread_mutex_t *mutex);
+		int pthread_mutex_unlock(pthread_mutex_t *mutex);
+		
+		限制一段代码以独占的形式执行，具体实现见abcd.c，mutex.c按顺序打印abcd
+		
+		将mytbf中的信号转化为线程，用来每秒给token更新值，见mytbf_thread
+		
+		为什么线程临界区需要加锁，而信号不用？信号的处理函数会打断当前执行，跳转到处理函数
+		
+		目前使用的都是查询法，cpu忙等
+		
+	条件变量
+		pthread_con_t
+		int pthread_cond_destroy(pthread_cond_t *cond);
+		int pthread_cond_init(pthread_cond_t *restrict cond, const pthread_condattr_t *restrict attr);
+			// pthread_cond_t cond = PTHREAD_COND_INITIALIZER;
+		int pthread_cond_broadcast(pthread_cond_t *cond);
+		int pthread_cond_signal(pthread_cond_t *cond);
+		int pthread_cond_wait(pthread_cond_t *restrict cond, pthread_mutex_t *restrict mutex);
+		int pthread_cond_timedwait(pthread_cond_t *restrict cond, pthread_mutex_t *restrict mutex, const struct timespec *restrict abstime);
+		
+	信号量
+	(信号量数组，之后进程间通信会涉及到)
+		互斥量是以独占形式使用资源，信号量是资源有限制数的共享。
+		样例使用互斥量+条件变量来实现。
+	
+	读写锁
+		读锁，相当于共享锁，信号量机制，有个上限控制
+		写锁，像是互斥锁
+		容易出现写锁饿死的现象，当有读锁时，加写锁后，后来又来读锁，后来的读锁会继续加锁成功，则读锁一直存在，写锁一直加不上。
+			则要求加写锁时，对外宣称加写锁，则后来的读锁会等待写锁释放锁，则不会出现饿死现象。
+	
+4 线程属性
+	线程同步的属性
+		int pthread_attr_init(pthread_attr_t *attr); // 成功返回0 失败返回非0
+		int pthread_attr_destroy(pthread_attr_t *attr);
+			see also pthread_attr_setdetachstate() pthread_attr_setstack() pthread_attr_setstacksize()等函数
+
+	互斥量属性
+		int pthread_mutexattr_init(pthread_mutexattr_t *attr);
+		int pthread_mutexattr_destroy(pthread_mutexattr_t *attr);
+		int pthread_mutexattr_getpshared(const pthread_mutexattr_t * restrict attr, int *restrict pshared); //是否跨进程使用
+		int pthread_mutexattr_setpshared(pthread_mutexattr_t *attr, int pshared);
+		
+		互斥量类型
+		int pthread_mutexattr_gettype(const pthread_mutexattr_t *restrict attr, int *restrict type);
+		int pthread_mutexattr_settype(pthread_mutexattr_t *attr, int type);
+			PTHREAD_MUTEX_NORMAL
+			PTHREAD_MUTEX_ERRORCHECK
+			PTHREAD_MUTEX_RECURSIVE
+			PTHREAD_MUTEX_DEFAULT
+			
+	条件变量属性
+		int pthread_condattr_init(pthread_condattr_t *attr);
+		int pthread_condattr_destroy(pthread_condattr_t *attr);
+	
+		
+	clone() 函数
+		通过flags参数可以创建独立的程序（进程，进程空间独立）或共享的程序（线程，进程空间共享）或介于进程和线程之间的程序（如CLONE_FILES，共享文件描述符）。
+		
+	
+5 重入概念
+	在信号专题中，要求信号处理函数是可重入函数，在多线程中，没有特别强调，因为大部分函数已经支持了多线程使用。
+	多线程中的IO（标准IO都已经实现了多线程并发，本身已经实现了lock缓冲区，对应有不锁的函数）
+	
+	线程与信号
+		之前信号响应是mask（全为1）与pending（全为0）位图，是以进程为单位。
+		
+		实际上每个线程有mask（全为1）与pending（全为0）位图，进程只有pending（全为0）位图。由内核返回用户态时，计算两次按位与。
+		pthread_sigmusk()
+		sigwait
+		pthread_kill() // 给线程发信号
+		
+	线程与fork
+		一个进程中有多个线程时，fork此进程，新进程有几个线程？
+		不同的线程原语产生的结果不同。posix线程中新进程只包含调用fork的线程。
+
+	
+	openmp线程标准
+	通过语句标识，借助编译器实现
+
+之前的很多程序都可以用多线程实现，在anytimer中有个语句需要用多线程或多进程实现
+链表的实现
+快速排序
+但冒泡排序不同，依赖于上次排序的结果
+
+线程常用的模式
+流水线模式
+工作模式：大任务拆分为小任务，之后汇总
+CS模式

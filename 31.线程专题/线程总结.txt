@@ -1,0 +1,70 @@
+线程的创建
+
+	主线程结束，其他线程会单独存在吗？
+		主线程使用return返回，不管其他线程是否是可分离，都结束运行(相当于main函数结束，整个程序退出)
+		主线程使用pthread_exit退出，分离线程和不可分离线程是什么状态？
+			分离的线程
+			[root@localhost thread]# ps ax -L | grep detach
+			  7101   7101 pts/2    Zl+    0:00 [detach] <defunct>
+			  7101   7102 pts/2    Sl+    0:00 [detach] <defunct>
+			结合的线程
+			[root@localhost thread]# ps ax -L | grep detach
+			  7480   7480 pts/2    Zl+    0:00 [detach] <defunct>
+			  7480   7481 pts/2    Sl+    0:00 [detach] <defunct>
+	
+	
+线程资源的回收
+	涉及到两类资源：
+	1. 子线程创建时从父线程copy出来的栈内存;
+		可结合的线程在退出后不会释放该资源，需要pthread_join来显式的结束线程
+		分离的线程退出时自动回收改资源
+	2. 子线程内部单独申请的堆内存（malloc、realloc、calloc)和锁资源mutex
+		一旦有处于挂起状态的取消请求（即加锁之后，解锁之前）， 线程在执行到取消点时如果只是草草收场，
+		这会将共享变量以及pthreads对象（例如互斥量）置于一种不一致状态，可能导致进程中其他线程产生错误结果、死锁，
+		甚至造成程序崩溃，为避免这一问题，需要使用清理函数。
+		
+		
+清理函数
+	从pthread_cleanup_push()的调用点到pthread_cleanup_pop()之间的程序段中的终止动作都将执行pthread_cleanup_push()所指定的清理函数。
+	
+	有三种情况线程清理函数会被调用：
+	- 线程还未执行 pthread_cleanup_pop 前，被 pthread_cancel 取消
+	- 线程还未执行 pthread_cleanup_pop 前，主动执行 pthread_exit 终止（注意使用return则不会调用清理函数）
+	- 线程执行 pthread_cleanup_pop，且 pthread_cleanup_pop 的参数不为 0.
+	
+	**pthread_cleanup_pop可以放到pthread_exit()之后，只是参数不管是否为0，都会弹出并执行**
+	pthread_cancel()和pthread_exit()不会管pthread_cleanup_pop参数是否为0，都会调用清理函数。
+	主动执行的pthread_cleanup_pop才会管参数。
+
+线程退出
+	当一个线程终止，进程共享资源（如互斥量mutexes、条件变量、信号量、文件描述符）将不会被释放，使用atexit注册的函数将不会被调用。
+	当进程中最后一个线程终止，进程会调用exit且返回状态值0来进行终止。因此，进程资源会被释放，通过atexit注册的函数也会被调用。
+
+	在非主线程的其他线程使用return返回将会隐式的调用pthread_exit，使用函数的返回值作为线程的结束状态。
+	为了允许其他线程继续执行，主线程的退出应该使用pthread_exit而不是exit。
+	被retval指向的返回值不应该位于调用pthread_exit函数的线程的栈中，因为在线程结束后，该线程栈中的内容将是不确定的。
+	
+线程取消
+	线程取消时，内部申请的堆内存和锁资源要释放，需要用到清理函数
+	```
+	void * thread_func(void *ptr)
+	...do sth1..
+	p = malloc(sizeof(int)); // 申请的堆内存
+	pthread_mutex_lock(&mut); // 获得的锁资源
+	pthread_cleanup_push(clean, NULL);
+	...do sth2..
+	pthread_cleanup_pop(1); // 将free(p)和pthread_mutex_unlock(&mut)都写到清理函数中
+	pthread_exit(NULL);
+	```
+	
+	应用场景
+		主线程利用join监听各个线程的状态，如果线程状态异常，则主动取消掉，然后重启线程。（都已经join了返回了,此时线程不是已经终止了吗?）
+	
+	pthread_cancel函数
+	当一个取消操作执行，如下步骤将会按顺序发生：
+	1. clean-up清理函数被弹出（弹出顺序和注册顺序相反）并执行
+	2. Thread-specific data destructors线程定义的数据析构器被调用，调用顺序不确定。（详见pthread_key_create）
+	3. 线程退出（见pthread_exit）
+	以上步骤将会异步发生。函数的返回状态仅仅告知调用者取消请求是否成功进入队列（并不能保证是否真的取消成功？）
+	如果一个被取消的线程已经终止，那么使用pthread_join等待此线程的程序会得到一个PTHREAD_CANCELED的线程返回状态。（join一个线程是获取线程是否真的取消的唯一方式）。
+	

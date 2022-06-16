@@ -1,0 +1,42 @@
+出来在代码中的注释点外，报式套接字注意有：
+
+涉及到地址地址信息的函数有
+	rcver.c中
+		bind()
+			int bind(int sockfd, const struct sockaddr *addr, socklen_t addrlen);
+		recvfrom()
+			ssize_t recvfrom(int sockfd, void *buf, size_t len, int flags, struct sockaddr *src_addr, socklen_t *addrlen)
+	snder.c中
+		sendto()
+			ssize_t sendto(int sockfd, const void *buf, size_t len, int flags, const struct sockaddr *dest_addr, socklen_t addrlen);
+
+
+	这三个函数中的地址，如果采用ipv4协议，则为以下结构体：
+
+	struct sockaddr_in {
+		sa_family_t    sin_family; /* address family: AF_INET */
+		in_port_t      sin_port;   /* port in network byte order */
+		struct in_addr sin_addr;   /* internet address */
+	};
+		struct in_addr {
+		uint32_t       s_addr;     /* address in network byte order */
+	};
+
+1.	其中sin_port、sin_addr(只有一个属性s_addr), 都涉及到字节序的转换。
+	在bind时，port用htons()转，sin_addr用inet_pton()转，inet_pton函数内部将点分式的ip地址转换为网络字节序的u32int_t类型ip地址
+	例如
+
+		laddr.sin_port = htons(atoi(RCVPORT));
+		inet_pton(AF_INET, "0.0.0.0", &laddr.sin_addr);
+
+		或
+		servaddr.sin_addr.s_addr = htonl(INADDR_ANY);
+		servaddr.sin_port = htons(atoi(argv[1]));
+	在sendto时也是如此
+
+	在recvfrom中，收到的地址信息存到raddr中
+
+2. bind和sendto的地址参数是用来传参的，而recvfrom的地址参数是用来回填的
+
+3. 在固定长度的报式套接字中，name数组是不可变的，不太方便，为了传输变长的struct结构体，则定义name数组（即array）的最大长度。
+	接收时创建最大长度的buf来接收，传输时可传输变长。

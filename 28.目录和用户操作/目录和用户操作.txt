@@ -1,0 +1,203 @@
+# 系统数据文件和信息
+	1 /etc/passwd
+		并不是每个系统都有该文件
+		其中的行：
+			bbip:x:1001:1001::/home/bbip:/bin/bash
+		用户名 加密 用户id 组id 家目录 登陆sh
+		
+		
+		getpwuid(); 
+			struct passwd *getpwuid(uid_t uid);
+		getpwuname();
+			struct passwd *getpwnam(const char *name);
+		struct passwd {
+               char   *pw_name;       /* username */
+               char   *pw_passwd;     /* user password */
+               uid_t   pw_uid;        /* user ID */
+               gid_t   pw_gid;        /* group ID */
+               char   *pw_gecos;      /* user information */
+               char   *pw_dir;        /* home directory */
+               char   *pw_shell;      /* shell program */
+           };
+		使用见getuname.c文件
+	2 /etc/group
+		leadcom:x:500:
+		
+		getgrgid();
+			struct group *getgrgid(gid_t gid);
+		getgrnam();
+			struct group *getgrnam(const char *name);
+		struct group {
+               char   *gr_name;       /* group name */
+               char   *gr_passwd;     /* group password */
+               gid_t   gr_gid;        /* group ID */
+               char  **gr_mem;        /* group members */
+           };
+	3 /etc/shadow
+		权限000，但用root账户可以用vim打开(因为root是最高管理员，除了不能执行没有x权限的文件，其他的读写权限都不能阻止其读写)
+		---------- 1 root root 1550 6月   8 2020 /etc/shadow
+		
+		leadcom:$6$57qPN9Cd9nz3KcGx$Kq.kBTPnGBKLmG6HwesehgSsz3iM3S51ey6N8dhydZ7Z5BlmmmY6CE7qHkWnQkLahbExDH29pqB53ciaKtgGe0:17242:0:99999:7:::
+			$6$ 第一个$后中的6表示加密方式
+			$57qPN9Cd9nz3KcGx$ 第二个$后是杂质串，密码或上此杂质串后再进行加密
+			第三个$是加密后的结果
+			
+		hash 是混淆而非加密(因为加密涉及到解密，而hash不可逆)，但很多加密都基于hash
+		
+		只用hash，如果相同的口令得到相同的值，那么根据其中一个就可得到另外一个密码
+		加密：安全？攻击成本大于收益
+		安全：穷举？口令的随机校验，连续两次成功输入密码
+		
+		getspnam(); 只有root账号才有权限
+			struct spwd *getspnam(const char *name);
+			struct spwd *getspent(void);
+			
+			struct spwd {
+               char *sp_namp;     /* Login name */
+               char *sp_pwdp;     /* Encrypted password */
+               long  sp_lstchg;   /* Date of last change (measured
+                                     in days since 1 Jan 1970) */
+               long  sp_min;      /* Min # of days between changes */
+               long  sp_max;      /* Max # of days between changes */
+               long  sp_warn;     /* # of days before password expires
+                                     to warn user to change it */
+               long  sp_inact;    /* # of days after password expires
+                                     until account is disabled */
+               long  sp_expire;   /* Date when account expires (measured
+                                     in days since 1 Jan 1970) */
+               unsigned long sp_flag;  /* Reserved */
+           };
+		   
+		crypt();
+			char *crypt(const char *key, const char *salt); 
+			// salt是$id$salt$的格式，其中id表示如下
+			ID  | Method
+              ---------------------------------------------------------
+              1   | MD5
+              2a  | Blowfish (not in mainline glibc; added in some
+                  | Linux distributions)
+              5   | SHA-256 (since glibc 2.7)
+              6   | SHA-512 (since glibc 2.7)
+		getpass(); 获取输入的密码
+			char *getpass( const char *prompt);
+			
+	4 时间戳
+		几个时间类型： time_t   char *   struct tm
+		几个时间函数
+		time(); 
+			time_t time(time_t *t); //从内核取时间戳
+			两种使用，可以传变量地址，或获取函数返回值。失败时返回-1.
+		localtime();
+		gmtime();
+			struct tm *localtime(const time_t *timep); //本地时间, 返回指针指向的内容在静态区上，每调用一次将覆盖之前调用的结果
+			struct tm *gmtime(const time_t *timep);    // 格林威治时间
+			
+			struct tm {
+               int tm_sec;         /* seconds */
+               int tm_min;         /* minutes */
+               int tm_hour;        /* hours */
+               int tm_mday;        /* day of the month */
+               int tm_mon;         /* month */
+               int tm_year;        /* year */ 从1900年到现在的年数
+               int tm_wday;        /* day of the week */
+               int tm_yday;        /* day in the year */
+               int tm_isdst;       /* daylight saving time */ 夏令时，一般不用，置为0
+           };
+			
+		
+		mktime();
+			time_t mktime(struct tm *tm); // 参数并没有被const修饰，可能在函数内部发生改变
+		strftime();
+			size_t strftime(char *s, size_t max, const char *format, const struct tm *tm);
+		
+		
+		
+	这四个与进程和ls命令相关
+
+# 进程环境
+	1. main函数
+	2. 进程的终止
+		正常终止
+			从main函数返回
+				因为程序从main入口，从main出口。main的返回值给其父进程查看。
+			调用exit
+				void exit(int status);
+				exit的将status&0377得到的值返回给它的父进程。与0377按位与，即只保留status的低八位，则结果范围是-128~127，一个有符号的char类型。
+				exit()退出前将会调用atexit和on_exit注册的钩子函数，且调用顺序与它们注册的顺序相反。
+				
+				
+			调用_exit或_Exit
+				_exit和_Exit是系统调用，exit是库函数， 且_exit和_Exit直接调用内核，不执行钩子函数和io清理函数。
+				如果异常时，不想扩大影响（exit会刷新缓冲等），则不使用exit，使用_exit
+				
+			最后一个线程从其启动例程返回
+			最后一个线程调用pthread_exit
+			
+		异常终止
+			调用abort
+			接到一个信号并终止
+			最后一个线程对其取消请求做出响应
+			
+		钩子函数，像C++中的析构函数，在进程正常终止时会按注册的顺序逆序调用。
+			int atexit(void (*function)(void));
+			int on_exit(void (*function)(int , void *), void *arg);
+	3. 命令行参数的分析
+	
+		getopt
+	4. 环境变量
+		实质就是key = value,使用export查看
+		
+		getenv();
+			char *getenv(const char *name);
+		setenv(); 新增或修改环境变量
+			int setenv(const char *name, const char *value, int overwrite);
+			//overwrite决定是否覆盖
+			//修改的环境变量，是在堆上重新申请一块区域存储，而不是在原来的存储上修改
+		putenv();
+			int putenv(char *string); // 行参不是用const修饰，一般不用
+	
+	5. C程序的存储空间布局
+		
+		0-3G用户态（其实从0X08048000）  3G-4G内核态
+		
+		pmap
+		
+		
+	6. 库
+		动态库
+		静态库
+		手工装载库
+		dlopen();
+		dlclose();
+		dlerror();
+		dlsym();
+	7. 函数跳转
+		goto;
+		setjmp();
+		longjmp();
+	8. 资源的获取及控制
+		ulimit -a
+		getrlimit();
+		setrlimit();
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

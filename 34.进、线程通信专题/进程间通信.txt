@@ -1,0 +1,80 @@
+同一主机
+不同主机
+
+进程间是否有亲缘关系
+
+
+
+1. 管道（使用内核缓冲区传输数据）
+	由内核提供， 半双工（一端读、一端写），自同步机制（处理速度由慢的那方决定）
+	匿名管道（使用ls看不到文件）,不能用在没有亲缘关系的进程中
+		int pipe(int pipefd[2]); //匿名管道 0端读，1端写, 使用时一方关闭读端，一发关闭写端
+
+	命名管道（文件类型为p的文件）
+		int mkfifo(const char *pathname, mode_t mode);
+	
+		
+	有关流媒体播放
+		
+2. XSI -> SysV
+https://blog.csdn.net/qq_38410730/article/details/81569852
+管道需要在内核和用户空间进行四次的数据拷贝：由用户空间的buf中将数据拷贝到内核中 -> 内核将数据拷贝到内存中 -> 内存到内核 -> 内核到用户空间的buf。而共享内存则只拷贝两次数据：用户空间到内存 -> 内存到用户空间
+	IPC Inter-Process—Communication
+	
+	主动端：先发包的一方
+	被动端：先收包的一方（先运行）
+	
+	使用ipcs查看有三种模式
+		消息队列    Message Queues
+		信号量数组  Semaphore Arrays
+		共享内存段  Shared Memory
+		
+		这三个都是通过创建实例、不同进程操作实例来完成。
+		实例的创建先使用ftok()生成key，然后再用key生成msgid/semid/shardid。
+		如果是父子进程间，则不用显式地生成key，在xxxget函数中用IPC_PRIVATE代替key。
+		
+		函数的通用方法
+			xxxget(获取) xxxop(使用) xxxctl(控制、销毁等)
+			如 msgget msgop msgctl emget semop semctl shmget shmop shmctl
+	
+	key: ftok()			
+	通过key值创建实例，拿到id
+	
+	消息队列（双工）消息队列，就是一个消息的链表，是一系列保存在内核中消息的列表
+		函数：
+			int msgget(key_t key, int msgflg);
+			int msgsnd(int msqid, const void *msgp, size_t msgsz, int msgflg);
+			ssize_t msgrcv(int msqid, void *msgp, size_t msgsz, long msgtyp, int msgflg);
+			nt msgctl(int msqid, int cmd, struct msqid_ds *buf);
+		
+		使用shell命令ipcrm删除消息队列、信号量数组、共享内存，例如用ipcrm -q
+	
+		【可以在没有亲缘关系的进程中通信】
+		
+		类似ftp传输的实现（就像cat一样，打印出文本内容）
+		
+			c向s发起一个请求，s打开此文件，一段一段发，直到发完为止，发送EOF。
+			
+			使用状态机流程图实现
+	
+	信号量数组
+		semaphore是针对一个资源量的共享上限，信号量数组针对多个资源量的共享。
+		信号量数组元素个数为1，则变为信号量。信号量资源上限为1， 则变为互斥量。
+		
+		函数：
+			int semctl(int semid, int semnum, int cmd, ...); // semnum数组下标，cmd代表操作，有IPC_SET、IPC_RMID等
+			int semop(int semid, struct sembuf *sops, unsigned nsops); //sops是结构体数组的起始地址
+		【可以在没有亲缘关系的进程中通信】
+		
+		【疑问】信号量数组好像传递不了什么数据，里面存的信号量也是为了对共享资源的控制，勉强算是一种消息传递？
+		代码中有个极端的例子，数组中只有一个元素，且元素值为1，其实就是一个互斥量。
+		
+	共享内存
+		比mmap共享内存复杂一点
+		hmget shmop shmctl
+		
+		void *shmat(int shmid, const void *shmaddr, int shmflg);
+		int shmdt(const void *shmaddr);
+		
+		
+3. 网络套接字
