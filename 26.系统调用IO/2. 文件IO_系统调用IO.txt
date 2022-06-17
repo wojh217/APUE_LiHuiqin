@@ -91,7 +91,7 @@
 6. 父子进程操作同一文件，A的close操作，B会立即感知到吗，是否会受到印象？
 	A的close完成后，文件表项是关闭，v节点项还存在吗，B应该不能操作吧？（经过测试B仍然能操作，见close.c）
 7. 独立的进程打开同一个文件后，A close文件后，删除或重命名文件，B还能读写操作吗？
-	（1）在A、B都已经打开此文件时，A删除文件，则B仍能继续读写，但外部ls已经看不到此文件，最后B的写入也不会生效。
+	（1）在A、B都已经打开此文件时，A删除文件，则B仍能继续读写，但外部ls已经看不到此文件，最后B的写入也不会生效。见remove.go
 	remove() deletes a name from the file system.  It calls unlink(2) for files, and rmdir(2) for
        directories.
 
