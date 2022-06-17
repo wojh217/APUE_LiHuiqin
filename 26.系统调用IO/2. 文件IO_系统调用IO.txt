@@ -19,7 +19,7 @@
 	（cache是加速读的机制，buffer是加速写的机制）
 	参数flags必须包含以下模式的其中之一：O_RDONLY（只读）、O_WRONLY（只写）、O_RDWR（读写）。
 	另外文件创建模式的flags和文件状态模式的flags可以任选0个或多个进行按位或运算，来作为flags。
-	文件创建模式的flags有：O_CREAT（创建）、O_EXCL（存在）、O_NOCTTY（终端设备）、O_TRUNC（截断）。
+	文件创建模式的flags有：O_CREAT（文件存在则创建）、O_EXCL（配合O_CREAT，如果文件已经存在则报错）、O_TRUNC（文件截断）、O_APPEND（追加写）
 
 	对应标准IO的模式： r --> O_RDONLY
 						r+ --> O_RDWR
@@ -90,6 +90,20 @@
 	（1）A的close完成后，B仍能进行读写，因为v节点项仍在
 6. 父子进程操作同一文件，A的close操作，B会立即感知到吗，是否会受到印象？
 	A的close完成后，文件表项是关闭，v节点项还存在吗，B应该不能操作吧？（经过测试B仍然能操作，见close.c）
+7. 独立的进程打开同一个文件后，A close文件后，删除或重命名文件，B还能读写操作吗？
+	（1）在A、B都已经打开此文件时，A删除文件，则B仍能继续读写，但外部ls已经看不到此文件，最后B的写入也不会生效。
+	remove() deletes a name from the file system.  It calls unlink(2) for files, and rmdir(2) for
+       directories.
+
+   If the removed name was the last link to a file and no processes have the file open, the file
+   is deleted and the space it was using is made available for reuse.
+
+   If the name was the last link to a file, but any processes still have the file open, the file
+   will remain in existence until the last file descriptor referring to it is closed.
+   （2）在A、B都已经打开此文件时，A删除文件，B仍能继续读写，且写入的内容会提现在重命名后的文件中。
+   rename()  renames a file, moving it between directories if required.  Any other hard links to
+   the file (as created using link(2)) are unaffected.  Open file descriptors  for  oldpath  are
+   also unaffected.
 	
 	
 
